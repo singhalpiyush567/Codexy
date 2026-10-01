@@ -1,0 +1,57 @@
+{
+  "name": "Invitation",
+  "type": "object",
+  "properties": {
+    "project_public_id": {
+      "type": "string"
+    },
+    "code": {
+      "type": "string"
+    },
+    "permission": {
+      "type": "string",
+      "enum": [
+        "view",
+        "edit"
+      ],
+      "default": "view"
+    },
+    "expires_at": {
+      "type": "string"
+    },
+    "max_uses": {
+      "type": "number",
+      "default": 0
+    },
+    "uses": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": [
+    "project_public_id",
+    "code"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "name": "ShareLink",
+  "type": "object",
+  "properties": {
+    "project_public_id": {
+      "type": "string"
+    },
+    "token": {
+      "type": "string"
+    },
+    "permission": {
+      "type": "string",
+      "enum": [
+        "view",
+        "edit"
+      ]
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": [
+    "project_public_id",
+    "token",
+    "permission"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}

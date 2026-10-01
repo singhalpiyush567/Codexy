@@ -1,0 +1,60 @@
+{
+  "name": "FileVersion",
+  "type": "object",
+  "properties": {
+    "file_id": {
+      "type": "string"
+    },
+    "project_public_id": {
+      "type": "string"
+    },
+    "version_number": {
+      "type": "number"
+    },
+    "content": {
+      "type": "string"
+    },
+    "old_content": {
+      "type": "string"
+    },
+    "new_content": {
+      "type": "string"
+    },
+    "user_name": {
+      "type": "string"
+    },
+    "user_id": {
+      "type": "string"
+    },
+    "change_type": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "file_id",
+    "version_number",
+    "content"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}
