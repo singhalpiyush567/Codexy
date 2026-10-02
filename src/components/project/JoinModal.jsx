@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
 import { Loader2, ArrowRight } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -14,13 +13,16 @@ export default function JoinModal({ onClose }) {
     if (code.length !== 4) return;
     setJoining(true);
     try {
-      const res = await base44.functions.invoke("joinByCode", { code });
-      base44.auth.isAuthenticated().then((ok) => {
-        if (ok) base44.functions.invoke("logActivity", { action: "joined_session", project_public_id: res.data.public_id }).catch(() => {});
-      }).catch(() => {});
-      navigate(`/p/${res.data.public_id}`);
+      const res = await fetch("/api/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not join project");
+      navigate(`/p/${data.public_id}`);
     } catch (e) {
-      toast({ title: "Could not join", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "Could not join", description: e.message, variant: "destructive" });
     } finally { setJoining(false); }
   }
 

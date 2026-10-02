@@ -205,6 +205,12 @@ export async function query(text, params = []) {
     return { rows: match ? [match] : [], rowCount: match ? 1 : 0 };
   }
 
+  if (sql.includes('SELECT') && sql.includes('FROM projects WHERE id = $1')) {
+    const id = params[0];
+    const match = memoryStore.projects.find(p => p.id === id);
+    return { rows: match ? [match] : [], rowCount: match ? 1 : 0 };
+  }
+
   if (sql.includes('SELECT') && sql.includes('FROM projects WHERE user_id = $1')) {
     const user_id = params[0];
     const rows = memoryStore.projects.filter(p => p.user_id === user_id);
@@ -375,6 +381,91 @@ export async function query(text, params = []) {
     const fileId = params[0];
     const rows = memoryStore.file_versions.filter(fv => fv.file_id === fileId).sort((a, b) => b.version_number - a.version_number);
     return { rows, rowCount: rows.length };
+  }
+
+  // 22. SHARE LINKS QUERIES
+  if (sql.includes('INSERT INTO share_links')) {
+    const share = {
+      id: crypto.randomUUID(),
+      project_id: params[0],
+      token: params[1],
+      permission: params[2] || 'view',
+      is_active: params[3] !== false,
+      created_at: new Date()
+    };
+    memoryStore.share_links.push(share);
+    return { rows: [share], rowCount: 1 };
+  }
+
+  if (sql.includes('SELECT') && sql.includes('FROM share_links')) {
+    const token = params[0];
+    const share = memoryStore.share_links.find(s => s.token === token && s.is_active);
+    if (!share) return { rows: [], rowCount: 0 };
+    const proj = memoryStore.projects.find(p => p.id === share.project_id);
+    return {
+      rows: [{
+        ...share,
+        public_id: proj?.public_id,
+        project_name: proj?.name,
+        language: proj?.language
+      }],
+      rowCount: 1
+    };
+  }
+
+  if (sql.includes('DELETE FROM share_links')) {
+    const id = params[0];
+    memoryStore.share_links = memoryStore.share_links.filter(s => s.id !== id);
+    return { rows: [], rowCount: 1 };
+  }
+
+  // 23. INVITATIONS QUERIES
+  if (sql.includes('INSERT INTO invitations')) {
+    const inv = {
+      id: crypto.randomUUID(),
+      project_id: params[0],
+      code: params[1],
+      permission: params[2] || 'view',
+      expires_at: params[3] || null,
+      max_uses: params[4] || 0,
+      uses: params[5] || 0,
+      created_at: new Date()
+    };
+    memoryStore.invitations.push(inv);
+    return { rows: [inv], rowCount: 1 };
+  }
+
+  if (sql.includes('UPDATE invitations') && sql.includes('SET uses = uses + 1')) {
+    const code = params[0];
+    const now = new Date();
+    const inv = memoryStore.invitations.find(i => 
+      i.code === code &&
+      (i.max_uses === 0 || i.uses < i.max_uses) &&
+      (!i.expires_at || new Date(i.expires_at) > now)
+    );
+    if (!inv) return { rows: [], rowCount: 0 };
+    inv.uses += 1;
+    return { rows: [inv], rowCount: 1 };
+  }
+
+  if (sql.includes('SELECT') && sql.includes('FROM invitations i JOIN projects p')) {
+    const invId = params[0];
+    const inv = memoryStore.invitations.find(i => i.id === invId);
+    if (!inv) return { rows: [], rowCount: 0 };
+    const proj = memoryStore.projects.find(p => p.id === inv.project_id);
+    return { rows: [{ id: inv.id, public_id: proj?.public_id }], rowCount: 1 };
+  }
+
+  if (sql.includes('SELECT') && sql.includes('FROM invitations WHERE project_id = $1')) {
+    const projId = params[0];
+    const rows = memoryStore.invitations.filter(i => i.project_id === projId);
+    return { rows, rowCount: rows.length };
+  }
+
+  if (sql.includes('DELETE FROM invitations')) {
+    const id = params[0];
+    memoryStore.invitations = memoryStore.invitations.filter(i => i.id !== id);
+    return { rows: [], rowCount: 1 };
   }
 
   return { rows: [], rowCount: 0 };

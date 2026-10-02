@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { Copy, Check, Ticket, Loader2, RefreshCw } from "lucide-react";
-import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
 
 export default function InviteModal({ publicId, ownerToken, joinCode, onSessionSaved, onClose }) {
@@ -20,16 +19,23 @@ export default function InviteModal({ publicId, ownerToken, joinCode, onSessionS
   async function generateNew() {
     setCreating(true);
     try {
-      const res = await base44.functions.invoke("createInviteCode", {
-        public_id: publicId,
-        owner_token: ownerToken,
-        permission: "edit",
+      const res = await fetch(`/api/projects/${publicId}/invitations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permission: "edit" }),
+        credentials: 'include'
       });
-      setCode(res.data.code);
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to generate code');
+      }
+
+      setCode(data.invitation.code);
       onSessionSaved?.();
       toast({ title: "New invite code generated", description: "Others can edit" });
     } catch (e) {
-      toast({ title: "Failed to generate code", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "Failed to generate code", description: e.message, variant: "destructive" });
     } finally {
       setCreating(false);
     }

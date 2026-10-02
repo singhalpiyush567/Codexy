@@ -1,6 +1,5 @@
 import { useEffect, useState, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Loader2, Eye, LogIn, Check, Cloud, History as HistoryIcon } from "lucide-react";
 import CodeEditor from "@/components/project/CodeEditor";
@@ -24,11 +23,13 @@ export default function PublicShareViewer() {
   useEffect(() => {
     (async () => {
       try {
-        const res = await base44.functions.invoke("getSharedProject", { token });
-        setData(res.data);
-        if (res.data.files.length) setActiveFileId(res.data.files[0].id);
+        const res = await fetch(`/api/shares/${token}`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error || "Invalid or inactive share link");
+        setData(json);
+        if (json.files?.length) setActiveFileId(json.files[0].id);
       } catch (e) {
-        setData({ error: e.response?.data?.error || e.message });
+        setData({ error: e.message });
       } finally { setLoading(false); }
     })();
   }, [token]);
@@ -46,13 +47,19 @@ export default function PublicShareViewer() {
     const content = draftRef.current;
     setSaveStatus("saving");
     try {
-      const res = await base44.functions.invoke("saveFile", { public_id: data.project.public_id, file_id: file.id, share_token: token, content, user_name: data.viewer?.name || "Editor" });
-      setData((prev) => ({ ...prev, files: prev.files.map((f) => (f.id === file.id ? { ...f, content, version_number: res.data.version_number } : f)) }));
+      const res = await fetch(`/api/files/${file.id}/content`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content })
+      });
+      const resData = await res.json();
+      if (!res.ok) throw new Error(resData.error || "Auto-save failed");
+      setData((prev) => ({ ...prev, files: prev.files.map((f) => (f.id === file.id ? { ...f, content } : f)) }));
       setDirty(false);
       setSaveStatus("saved");
     } catch (e) {
       setSaveStatus("error");
-      toast({ title: "Auto-save failed", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "Auto-save failed", description: e.message, variant: "destructive" });
     }
   };
 

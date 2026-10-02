@@ -5,6 +5,7 @@ import { handleAuthRequest } from './server/api/auth.js';
 import { handleProjectsRequest } from './server/api/projects.js';
 import { handleFilesRequest } from './server/api/files.js';
 import { handleHistoryRequest } from './server/api/history.js';
+import { handleSharesRequest } from './server/api/shares.js';
 
 function apiDevMiddleware() {
   return {
@@ -37,7 +38,11 @@ function apiDevMiddleware() {
           const action = parts[parts.length - 1] || 'me';
           result = await handleAuthRequest(req, res, action, body, req.headers);
         } else if (route === 'projects') {
-          result = await handleProjectsRequest(req, res, pathParts, queryParams, body, req.headers);
+          if (parts.includes('shares') || parts.includes('invitations')) {
+            result = await handleSharesRequest(req, res, pathParts, queryParams, body, req.headers);
+          } else {
+            result = await handleProjectsRequest(req, res, pathParts, queryParams, body, req.headers);
+          }
         } else if (route === 'files') {
           if (parts.includes('versions')) {
             result = await handleHistoryRequest(req, res, pathParts, queryParams, body, req.headers);
@@ -46,6 +51,8 @@ function apiDevMiddleware() {
           }
         } else if (route === 'history') {
           result = await handleHistoryRequest(req, res, pathParts, queryParams, body, req.headers);
+        } else if (route === 'shares' || route === 'join' || route === 'invitations') {
+          result = await handleSharesRequest(req, res, pathParts, queryParams, body, req.headers);
         } else {
           return next();
         }

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
+import { useAuth } from "@/lib/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Loader2, ArrowRight } from "lucide-react";
@@ -9,20 +9,25 @@ import { useToast } from "@/components/ui/use-toast";
 export default function JoinProject() {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [code, setCode] = useState("");
   const [joining, setJoining] = useState(false);
-  const [authed, setAuthed] = useState(null);
-
-  useEffect(() => { base44.auth.isAuthenticated().then(setAuthed).catch(() => setAuthed(false)); }, []);
+  const authed = !!user;
 
   async function join() {
     if (code.length !== 4) return;
     setJoining(true);
     try {
-      const res = await base44.functions.invoke("joinByCode", { code });
-      navigate(`/p/${res.data.public_id}`);
+      const res = await fetch("/api/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not join project");
+      navigate(`/p/${data.public_id}`);
     } catch (e) {
-      toast({ title: "Could not join", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "Could not join", description: e.message, variant: "destructive" });
     } finally { setJoining(false); }
   }
 

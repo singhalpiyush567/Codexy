@@ -1,7 +1,6 @@
 import { useRef, useState } from "react";
 import { QRCodeCanvas } from "qrcode.react";
 import { Copy, Download, Check, Link2, Eye, Pencil, Loader2 } from "lucide-react";
-import { base44 } from "@/api/base44Client";
 import { useToast } from "@/components/ui/use-toast";
 
 function PermToggle({ value, onChange }) {
@@ -62,16 +61,23 @@ export default function ShareModal({ publicId, ownerToken, onSessionSaved, onClo
   async function createShare() {
     setCreating(true);
     try {
-      const res = await base44.functions.invoke("createShareLink", {
-        public_id: publicId,
-        owner_token: ownerToken,
-        permission: sharePerm,
+      const res = await fetch(`/api/projects/${publicId}/shares`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permission: sharePerm }),
+        credentials: 'include'
       });
-      setShareLink({ url: `${window.location.origin}/share/${res.data.token}`, perm: res.data.permission });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to create share link');
+      }
+
+      setShareLink({ url: `${window.location.origin}/share/${data.share.token}`, perm: data.share.permission });
       onSessionSaved?.();
       toast({ title: "Share link created", description: sharePerm === "edit" ? "Others can edit" : "View only" });
     } catch (e) {
-      toast({ title: "Failed to create link", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "Failed to create link", description: e.message, variant: "destructive" });
     } finally {
       setCreating(false);
     }
