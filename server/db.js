@@ -4,6 +4,7 @@ const { Pool } = pg;
 
 // Singleton database pool
 let pool = null;
+let memoryTxLock = Promise.resolve();
 
 // In-memory store fallback for offline testing / development without live DB
 const memoryStore = {
@@ -274,14 +275,16 @@ export async function query(text, params = []) {
   // 18. UPDATE PROJECT_FILES
   if (sql.includes('UPDATE project_files SET content = $1')) {
     const content = params[0];
-    const filename = params[1];
-    const language = params[2];
-    const fileId = params[3];
+    const fileId = params[params.length - 1];
     const file = memoryStore.project_files.find(f => f.id === fileId);
     if (file) {
       file.content = content;
-      file.filename = filename;
-      file.language = language;
+      if (params.length > 2 && typeof params[1] === 'number') {
+        file.version_number = params[1];
+      } else if (params.length > 3) {
+        file.filename = params[1];
+        file.language = params[2];
+      }
       file.updated_at = new Date();
     }
     return { rows: file ? [file] : [], rowCount: file ? 1 : 0 };
@@ -329,18 +332,56 @@ export async function query(text, params = []) {
     return { rows: [], rowCount: 1 };
   }
 
-  // 21. SELECT FROM FILE_VERSIONS
+  // 21. FILE VERSIONS QUERIES
   if (sql.includes('SELECT COUNT(*) FROM file_versions')) {
     const fileId = params[0];
     const rows = memoryStore.file_versions.filter(fv => fv.file_id === fileId);
     return { rows: [{ count: rows.length }], rowCount: 1 };
   }
 
+  if (sql.includes('SELECT COALESCE(MAX(version_number), 0) + 1 as next_ver FROM file_versions')) {
+    const fileId = params[0];
+    const fileVers = memoryStore.file_versions.filter(fv => fv.file_id === fileId);
+    const maxVer = fileVers.reduce((max, fv) => Math.max(max, fv.version_number), 0);
+    return { rows: [{ next_ver: maxVer + 1 }], rowCount: 1 };
+  }
+
+  if (sql.includes('INSERT INTO file_versions')) {
+    const ver = {
+      id: crypto.randomUUID(),
+      file_id: params[0],
+      project_id: params[1],
+      version_number: params[2],
+      content: params[3],
+      old_content: params[4],
+      new_content: params[5],
+      user_id: params[6],
+      user_name: params[7],
+      change_type: params[8] || 'manual_save',
+      created_at: new Date()
+    };
+    memoryStore.file_versions.push(ver);
+    return { rows: [ver], rowCount: 1 };
+  }
+
+  if (sql.includes('SELECT') && sql.includes('WHERE file_id = $1 AND version_number = $2')) {
+    const fileId = params[0];
+    const verNum = parseInt(params[1], 10);
+    const match = memoryStore.file_versions.find(fv => fv.file_id === fileId && fv.version_number === verNum);
+    return { rows: match ? [match] : [], rowCount: match ? 1 : 0 };
+  }
+
+  if (sql.includes('SELECT') && sql.includes('FROM file_versions') && sql.includes('WHERE file_id = $1')) {
+    const fileId = params[0];
+    const rows = memoryStore.file_versions.filter(fv => fv.file_id === fileId).sort((a, b) => b.version_number - a.version_number);
+    return { rows, rowCount: rows.length };
+  }
+
   return { rows: [], rowCount: 0 };
 }
 
 /**
- * Execute a database transaction
+ * Execute a database transaction (serialized via mutex queue in memory mode)
  */
 export async function transaction(callback) {
   const p = getPool();
@@ -359,8 +400,12 @@ export async function transaction(callback) {
     }
   }
 
-  // In-memory mock transaction
-  return callback({ query });
+  // In-memory mock transaction (serialized via mutex queue to simulate DB transaction isolation)
+  const nextLock = memoryTxLock.then(async () => {
+    return callback({ query });
+  });
+  memoryTxLock = nextLock.catch(() => {});
+  return nextLock;
 }
 
 export default {

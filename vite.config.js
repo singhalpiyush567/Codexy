@@ -4,6 +4,7 @@ import { defineConfig } from 'vite';
 import { handleAuthRequest } from './server/api/auth.js';
 import { handleProjectsRequest } from './server/api/projects.js';
 import { handleFilesRequest } from './server/api/files.js';
+import { handleHistoryRequest } from './server/api/history.js';
 
 function apiDevMiddleware() {
   return {
@@ -38,7 +39,13 @@ function apiDevMiddleware() {
         } else if (route === 'projects') {
           result = await handleProjectsRequest(req, res, pathParts, queryParams, body, req.headers);
         } else if (route === 'files') {
-          result = await handleFilesRequest(req, res, pathParts, queryParams, body, req.headers);
+          if (parts.includes('versions')) {
+            result = await handleHistoryRequest(req, res, pathParts, queryParams, body, req.headers);
+          } else {
+            result = await handleFilesRequest(req, res, pathParts, queryParams, body, req.headers);
+          }
+        } else if (route === 'history') {
+          result = await handleHistoryRequest(req, res, pathParts, queryParams, body, req.headers);
         } else {
           return next();
         }

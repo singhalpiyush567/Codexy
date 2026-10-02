@@ -1,6 +1,5 @@
 import { useEffect, useState, memo } from "react";
 import { DiffEditor } from "@monaco-editor/react";
-import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Loader2, RotateCcw, X, FilePlus, History as HistoryIcon, Pencil } from "lucide-react";
 import { formatDate, timeAgo, monacoLang, getLanguageFromFilename } from "@/lib/projectUtils";
@@ -13,19 +12,38 @@ function HistoryPanel({ publicId, ownerToken, shareToken, file, canEdit, onResto
   const [selected, setSelected] = useState(null);
   const [restoring, setRestoring] = useState(false);
 
+  const loadHistory = async (fileId) => {
+    if (!fileId) { setVersions([]); setLoading(false); return; }
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/history/${fileId}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to load history');
+      }
+
+      const data = await res.json();
+      setVersions(data.versions || []);
+    } catch (e) {
+      toast({ title: "Failed to load history", description: e.message, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      if (!file) { setVersions([]); setLoading(false); return; }
-      setLoading(true); setSelected(null);
-      try {
-        const res = await base44.functions.invoke("getHistory", { public_id: publicId, file_id: file.id, owner_token: ownerToken, share_token: shareToken });
-        if (!cancelled) setVersions(res.data.versions || []);
-      } catch (e) {
-        toast({ title: "Failed to load history", description: e.response?.data?.error || e.message, variant: "destructive" });
-      } finally { if (!cancelled) setLoading(false); }
-    })();
-    return () => { cancelled = true; };
+    setSelected(null);
+    if (file?.id) {
+      loadHistory(file.id);
+    } else {
+      setVersions([]);
+      setLoading(false);
+    }
   }, [publicId, file?.id]);
 
   const lang = file ? monacoLang(file.language || getLanguageFromFilename(file.filename)) : "plaintext";
@@ -34,14 +52,23 @@ function HistoryPanel({ publicId, ownerToken, shareToken, file, canEdit, onResto
     if (!confirm(`Restore version ${v.version_number}? A new version will be created — history is preserved.`)) return;
     setRestoring(true);
     try {
-      const res = await base44.functions.invoke("saveFile", { public_id: publicId, file_id: file.id, owner_token: ownerToken, share_token: shareToken, restore_version_id: v.id, user_name: "Owner" });
-      toast({ title: `Restored version ${v.version_number}`, description: `Created version ${res.data.version_number}` });
+      const res = await fetch(`/api/files/${file.id}/versions/${v.version_number}/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Restore failed');
+      }
+
+      toast({ title: `Restored version ${v.version_number}`, description: `Created version ${data.version_number}` });
       setSelected(null);
-      onRestored?.(res.data);
-      const h = await base44.functions.invoke("getHistory", { public_id: publicId, file_id: file.id, owner_token: ownerToken, share_token: shareToken });
-      setVersions(h.data.versions || []);
+      onRestored?.(data);
+      await loadHistory(file.id);
     } catch (e) {
-      toast({ title: "Restore failed", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "Restore failed", description: e.message, variant: "destructive" });
     } finally { setRestoring(false); }
   }
 
@@ -62,7 +89,7 @@ function HistoryPanel({ publicId, ownerToken, shareToken, file, canEdit, onResto
           {v.version_number === file?.version_number && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">Current</span>}
           {isCreated && <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-300">Created</span>}
           <div className="flex-1" />
-          <div className="text-xs text-white/50 hidden sm:block">{v.user_name} · {formatDate(v.created_date)}</div>
+          <div className="text-xs text-white/50 hidden sm:block">{v.user_name} · {formatDate(v.created_at || v.created_date)}</div>
           {canEdit && v.version_number !== file?.version_number && (
             <Button size="sm" onClick={() => restore(v)} disabled={restoring} className="bg-[#e91e63] hover:bg-[#d81b5c] h-8">
               <RotateCcw className="w-3.5 h-3.5 mr-1.5" />{restoring ? "Restoring..." : "Restore this version"}
@@ -82,7 +109,7 @@ function HistoryPanel({ publicId, ownerToken, shareToken, file, canEdit, onResto
     );
   }
 
-  if (!versions.length) return <div className="p-6 text-center text-sm text-white/40">No versions yet. Start typing — code auto-saves and each save creates a version.</div>;
+  if (!versions.length) return <div className="p-6 text-center text-sm text-white/40">No versions yet. Click "Save to History" in the toolbar to create a version checkpoint.</div>;
 
   return (
     <div className="py-2 overflow-y-auto h-full">
@@ -102,7 +129,7 @@ function HistoryPanel({ publicId, ownerToken, shareToken, file, canEdit, onResto
                   {isCurrent && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">Current</span>}
                   {isCreated && <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-500/15 text-pink-300">Created</span>}
                 </div>
-                <div className="text-[11px] text-white/50 mt-0.5 truncate">{v.user_name} · {timeAgo(v.created_date)}</div>
+                <div className="text-[11px] text-white/50 mt-0.5 truncate">{v.user_name} · {timeAgo(v.created_at || v.created_date)}</div>
               </div>
               <HistoryIcon className="w-3.5 h-3.5 text-white/30 shrink-0" />
             </div>
