@@ -132,10 +132,13 @@ export async function getUserBySession(cookieString) {
 }
 
 /**
- * Generate a 6-digit numeric OTP code and save to auth_tokens table
+ * Generate a 6-digit numeric OTP code or secure reset token and save to auth_tokens table
  */
 export async function createOtpToken(email, userId = null, type = 'otp') {
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  const code = type === 'password_reset' 
+    ? crypto.randomBytes(32).toString('hex')
+    : Math.floor(100000 + Math.random() * 900000).toString();
+
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 
   // Invalidate old tokens of this type for this email
@@ -153,7 +156,7 @@ export async function createOtpToken(email, userId = null, type = 'otp') {
 }
 
 /**
- * Verify an OTP token
+ * Verify an OTP or password reset token
  */
 export async function verifyOtpToken(email, code, type = 'otp') {
   const res = await query(
@@ -164,10 +167,35 @@ export async function verifyOtpToken(email, code, type = 'otp') {
   );
 
   if (res.rows.length === 0) {
-    return { valid: false, message: 'Invalid or expired verification code' };
+    return { valid: false, message: 'Invalid or expired verification token/code' };
   }
 
   const tokenRecord = res.rows[0];
   await query(`UPDATE auth_tokens SET used = TRUE WHERE id = $1`, [tokenRecord.id]);
   return { valid: true, tokenRecord };
+}
+
+/**
+ * Invalidate all active sessions for a user (e.g. after password reset)
+ */
+export async function invalidateAllUserSessions(userId) {
+  if (!userId) return;
+  await query(`DELETE FROM sessions WHERE user_id = $1`, [userId]);
+}
+
+// In-memory rate limiting map for sensitive auth operations
+const authRateLimits = new Map();
+
+export function checkAuthRateLimit(key, limit = 5, windowMs = 60 * 1000) {
+  const now = Date.now();
+  let record = authRateLimits.get(key);
+  if (!record || now > record.resetAt) {
+    record = { count: 0, resetAt: now + windowMs };
+    authRateLimits.set(key, record);
+  }
+  record.count += 1;
+  return {
+    limited: record.count > limit,
+    retryAfterSeconds: Math.ceil((record.resetAt - now) / 1000)
+  };
 }

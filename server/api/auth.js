@@ -6,11 +6,19 @@ import {
   destroySession, 
   getUserBySession, 
   createOtpToken, 
-  verifyOtpToken 
+  verifyOtpToken,
+  invalidateAllUserSessions,
+  checkAuthRateLimit
 } from '../auth.js';
+import {
+  sendOtpEmail,
+  sendPasswordResetEmail,
+  sendAdminNotification
+} from '../email.js';
 
 export async function handleAuthRequest(req, res, action, body, headers) {
   const cookieHeader = headers?.cookie || req.headers?.cookie || '';
+  const clientIp = headers?.['x-forwarded-for'] || req.socket?.remoteAddress || '127.0.0.1';
 
   try {
     // -----------------------------------------------------------------
@@ -46,6 +54,11 @@ export async function handleAuthRequest(req, res, action, body, headers) {
         return { status: 400, body: { error: 'Email and password are required' } };
       }
 
+      const rateLimitState = checkAuthRateLimit(`reg:${clientIp}`, 5, 60000);
+      if (rateLimitState.limited) {
+        return { status: 429, body: { error: 'Too many registration attempts. Please wait.' } };
+      }
+
       const existing = await query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
       if (existing.rows.length > 0) {
         return { status: 400, body: { error: 'Email is already registered' } };
@@ -63,21 +76,31 @@ export async function handleAuthRequest(req, res, action, body, headers) {
       const user = newUserRes.rows[0];
       const otpCode = await createOtpToken(user.email, user.id, 'otp');
 
+      // Send OTP verification email to user
+      const emailResult = await sendOtpEmail(user.email, otpCode);
+
+      // Send Admin Notification to EMAIL_TO
+      await sendAdminNotification({
+        event: 'account_created',
+        userEmail: user.email,
+        userName: user.name
+      });
+
       // Log user activity
       await query(
         `INSERT INTO user_activity (user_id, user_name, action, detail) VALUES ($1, $2, $3, $4)`,
         [user.id, user.name, 'registered', `User registered with email ${user.email}`]
       );
 
-      console.log(`[AUTH] OTP generated for ${user.email}: ${otpCode}`);
-
       return {
         status: 200,
         body: {
           success: true,
-          message: 'Account created. Verification OTP sent.',
+          message: emailResult.delivered 
+            ? 'Account created. Verification OTP sent to your email.' 
+            : 'Account created. OTP generated.',
           email: user.email,
-          // In development environments without email provider configured, we include debug code if needed
+          emailDelivered: emailResult.delivered,
           otpDebug: process.env.NODE_ENV === 'development' ? otpCode : undefined
         }
       };
@@ -90,6 +113,11 @@ export async function handleAuthRequest(req, res, action, body, headers) {
       const { email, otpCode } = body || {};
       if (!email || !otpCode) {
         return { status: 400, body: { error: 'Email and OTP code are required' } };
+      }
+
+      const rateLimitState = checkAuthRateLimit(`ver:${clientIp}:${email.toLowerCase()}`, 10, 60000);
+      if (rateLimitState.limited) {
+        return { status: 429, body: { error: 'Too many verification attempts. Please wait.' } };
       }
 
       const verifyRes = await verifyOtpToken(email.toLowerCase(), otpCode, 'otp');
@@ -129,7 +157,12 @@ export async function handleAuthRequest(req, res, action, body, headers) {
         return { status: 400, body: { error: 'Email is required' } };
       }
 
-      const userRes = await query('SELECT id, email FROM users WHERE email = $1', [email.toLowerCase()]);
+      const rateLimitState = checkAuthRateLimit(`resend:${clientIp}:${email.toLowerCase()}`, 3, 60000);
+      if (rateLimitState.limited) {
+        return { status: 429, body: { error: 'Too many OTP resend requests. Please wait a minute.' } };
+      }
+
+      const userRes = await query('SELECT id, email, name FROM users WHERE email = $1', [email.toLowerCase()]);
       if (userRes.rows.length === 0) {
         return { status: 400, body: { error: 'User not found' } };
       }
@@ -137,13 +170,17 @@ export async function handleAuthRequest(req, res, action, body, headers) {
       const user = userRes.rows[0];
       const otpCode = await createOtpToken(user.email, user.id, 'otp');
 
-      console.log(`[AUTH] Resent OTP for ${user.email}: ${otpCode}`);
+      // Send OTP verification email
+      const emailResult = await sendOtpEmail(user.email, otpCode);
 
       return {
         status: 200,
         body: {
           success: true,
-          message: 'OTP resent successfully.',
+          message: emailResult.delivered 
+            ? 'OTP resent to your email.' 
+            : 'OTP resent successfully.',
+          emailDelivered: emailResult.delivered,
           otpDebug: process.env.NODE_ENV === 'development' ? otpCode : undefined
         }
       };
@@ -156,6 +193,11 @@ export async function handleAuthRequest(req, res, action, body, headers) {
       const { email, password } = body || {};
       if (!email || !password) {
         return { status: 400, body: { error: 'Email and password are required' } };
+      }
+
+      const rateLimitState = checkAuthRateLimit(`login:${clientIp}`, 10, 60000);
+      if (rateLimitState.limited) {
+        return { status: 429, body: { error: 'Too many login attempts. Please wait.' } };
       }
 
       const userRes = await query(
@@ -175,6 +217,13 @@ export async function handleAuthRequest(req, res, action, body, headers) {
 
       // Create session
       const { cookieHeader: newCookie } = await createSession(user.id);
+
+      // Send Admin Notification to EMAIL_TO for successful login
+      await sendAdminNotification({
+        event: 'login_success',
+        userEmail: user.email,
+        userName: user.name
+      });
 
       // Log login activity
       await query(
@@ -219,19 +268,26 @@ export async function handleAuthRequest(req, res, action, body, headers) {
         return { status: 400, body: { error: 'Email is required' } };
       }
 
-      const userRes = await query('SELECT id, email FROM users WHERE email = $1', [email.toLowerCase()]);
+      const rateLimitState = checkAuthRateLimit(`forgot:${clientIp}`, 5, 60000);
+      if (rateLimitState.limited) {
+        return { status: 429, body: { error: 'Too many password reset requests. Please wait.' } };
+      }
+
+      let emailResult = { delivered: false };
+      const userRes = await query('SELECT id, email, name FROM users WHERE email = $1', [email.toLowerCase()]);
       if (userRes.rows.length > 0) {
         const user = userRes.rows[0];
         const resetToken = await createOtpToken(user.email, user.id, 'password_reset');
-        console.log(`[AUTH] Password reset token for ${user.email}: ${resetToken}`);
+        emailResult = await sendPasswordResetEmail(user.email, resetToken);
       }
 
-      // Always return success to prevent email enumeration
+      // Security requirement: ALWAYS return uniform success response to prevent email enumeration attacks
       return {
         status: 200,
         body: {
           success: true,
-          message: 'If an account exists with that email, a password reset link/code has been sent.'
+          message: 'If an account exists with that email, a password reset link has been sent.',
+          emailDelivered: emailResult.delivered
         }
       };
     }
@@ -245,13 +301,28 @@ export async function handleAuthRequest(req, res, action, body, headers) {
         return { status: 400, body: { error: 'Email, reset token, and new password are required' } };
       }
 
+      const rateLimitState = checkAuthRateLimit(`reset:${clientIp}`, 5, 60000);
+      if (rateLimitState.limited) {
+        return { status: 429, body: { error: 'Too many password reset attempts. Please wait.' } };
+      }
+
       const verifyRes = await verifyOtpToken(email.toLowerCase(), token, 'password_reset');
       if (!verifyRes.valid) {
         return { status: 400, body: { error: verifyRes.message } };
       }
 
+      const userRes = await query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
+      if (userRes.rows.length === 0) {
+        return { status: 400, body: { error: 'User not found' } };
+      }
+      const user = userRes.rows[0];
+
+      // Update password hash
       const password_hash = await hashPassword(newPassword);
-      await query('UPDATE users SET password_hash = $1 WHERE email = $2', [password_hash, email.toLowerCase()]);
+      await query('UPDATE users SET password_hash = $1 WHERE id = $2', [password_hash, user.id]);
+
+      // Invalidate all active sessions for security
+      await invalidateAllUserSessions(user.id);
 
       return {
         status: 200,

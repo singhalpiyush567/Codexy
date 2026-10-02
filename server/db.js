@@ -128,7 +128,7 @@ export async function query(text, params = []) {
   if (sql.includes('INSERT INTO auth_tokens')) {
     const tokenRecord = {
       id: crypto.randomUUID(),
-      email: params[0],
+      email: params[0]?.toLowerCase(),
       user_id: params[1],
       token: params[2],
       type: params[3],
@@ -162,8 +162,8 @@ export async function query(text, params = []) {
   // 10. UPDATE USERS SET PASSWORD_HASH
   if (sql.includes('UPDATE users SET password_hash = $1')) {
     const hash = params[0];
-    const email = params[1]?.toLowerCase();
-    const user = memoryStore.users.find(u => u.email === email);
+    const target = params[1];
+    const user = memoryStore.users.find(u => u.email === target?.toLowerCase() || u.id === target);
     if (user) user.password_hash = hash;
     return { rows: [], rowCount: 1 };
   }
