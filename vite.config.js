@@ -7,10 +7,26 @@ import { handleFilesRequest } from './server/api/files.js';
 import { handleHistoryRequest } from './server/api/history.js';
 import { handleSharesRequest } from './server/api/shares.js';
 
+import { WebSocketServer } from 'ws';
+import { handleRealtimeConnection } from './server/realtime.js';
+
 function apiDevMiddleware() {
   return {
     name: 'codexy-api-dev-middleware',
     configureServer(server) {
+      const wss = new WebSocketServer({ noServer: true });
+      wss.on('connection', (ws, req) => {
+        handleRealtimeConnection(ws, req);
+      });
+
+      server.httpServer?.on('upgrade', (req, socket, head) => {
+        if (req.url?.startsWith('/api/ws') || req.url?.startsWith('/ws')) {
+          wss.handleUpgrade(req, socket, head, (ws) => {
+            wss.emit('connection', ws, req);
+          });
+        }
+      });
+
       server.middlewares.use(async (req, res, next) => {
         if (!req.url.startsWith('/api/')) return next();
 

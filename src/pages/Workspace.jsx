@@ -12,6 +12,7 @@ import LoginToEditModal from "@/components/project/LoginToEditModal";
 import ProjectNameEditor from "@/components/project/ProjectNameEditor";
 import { getOwnerToken, monacoLang, getLanguageFromFilename, getGuestIdentity } from "@/lib/projectUtils";
 import { useAuth } from "@/lib/AuthContext";
+import { useRealtime } from "@/lib/useRealtime";
 
 export default function Workspace() {
   const { publicId } = useParams();
@@ -44,11 +45,37 @@ export default function Workspace() {
   const activeFileIdRef = useRef(null);
   const filesRef = useRef([]);
   const canEditRef = useRef(false);
-  const mySeatRef = useRef(0);
   const applyingRemote = useRef(false);
-  const roomRef = useRef(null);
   const dirtyRef = useRef(false);
   const doSaveRef = useRef(() => {});
+
+  const handleRemoteEdit = useCallback((msg) => {
+    if (msg.fileId === activeFileIdRef.current) {
+      applyingRemote.current = true;
+      setDraft(msg.content);
+      draftRef.current = msg.content;
+    }
+    setFiles((prev) => prev.map((f) => (f.id === msg.fileId ? { ...f, content: msg.content } : f)));
+  }, []);
+
+  const handlePresence = useCallback((users) => {
+    setActiveUsers(users);
+  }, []);
+
+  const handleStatusChange = useCallback((st) => {
+    setConnStatus(st);
+  }, []);
+
+  const { sendEdit } = useRealtime({
+    projectId: publicId,
+    enabled: !!project,
+    onEdit: handleRemoteEdit,
+    onPresence: handlePresence,
+    onStatusChange: handleStatusChange
+  });
+
+  const sendEditRef = useRef(sendEdit);
+  useEffect(() => { sendEditRef.current = sendEdit; }, [sendEdit]);
 
   const loadProject = useCallback(async () => {
     try {
@@ -171,6 +198,9 @@ export default function Workspace() {
     draftRef.current = v;
     setDraft(v);
     setDirty(true);
+    if (sendEditRef.current && activeFileIdRef.current) {
+      sendEditRef.current(activeFileIdRef.current, v);
+    }
   }
 
   function handleEditorMount(editor) {
@@ -269,8 +299,8 @@ export default function Workspace() {
         )}
 
         <div className="flex items-center gap-1.5 text-[11px] mr-1">
-          <span className="w-2 h-2 rounded-full bg-green-400" />
-          <span className="text-white/50 hidden sm:inline">Online</span>
+          <span className={`w-2 h-2 rounded-full ${connStatus === 'connected' ? 'bg-green-400' : connStatus === 'reconnecting' ? 'bg-amber-400 animate-pulse' : 'bg-red-400'}`} />
+          <span className="text-white/50 hidden sm:inline">{connStatus === 'connected' ? 'Online' : connStatus === 'reconnecting' ? 'Reconnecting' : 'Offline'}</span>
         </div>
 
         <Button variant="ghost" size="sm" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} className="text-white/60 hover:text-white h-8">{theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}</Button>
