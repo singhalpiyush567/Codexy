@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import { base44 } from "@/api/base44Client";
 import { Pencil, Check, X, Loader2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -18,11 +17,20 @@ export default function ProjectNameEditor({ publicId, ownerToken, name, isOwner,
     if (!clean || clean === name) { setEditing(false); setValue(name); return; }
     setSaving(true);
     try {
-      const res = await base44.functions.invoke("renameProject", { public_id: publicId, owner_token: ownerToken, name: clean });
-      onSaved?.(res.data.name);
+      const res = await fetch(`/api/projects/${publicId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: clean }),
+        credentials: 'include'
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Rename failed');
+
+      onSaved?.(data.project.name);
       toast({ title: "Project renamed" });
     } catch (e) {
-      toast({ title: "Rename failed", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "Rename failed", description: e.message, variant: "destructive" });
       setValue(name);
     } finally {
       setSaving(false);

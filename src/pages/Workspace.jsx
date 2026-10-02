@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
 import { Share2, History as HistoryIcon, Loader2, Sun, Moon, LogIn, Check, Cloud, Users, Ticket } from "lucide-react";
@@ -12,11 +11,13 @@ import HistoryPanel from "@/components/project/HistoryPanel";
 import LoginToEditModal from "@/components/project/LoginToEditModal";
 import ProjectNameEditor from "@/components/project/ProjectNameEditor";
 import { getOwnerToken, monacoLang, getLanguageFromFilename, getGuestIdentity } from "@/lib/projectUtils";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function Workspace() {
   const { publicId } = useParams();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { logout } = useAuth();
   const [project, setProject] = useState(null);
   const [files, setFiles] = useState([]);
   const [access, setAccess] = useState({ role: "viewer", canEdit: false });
@@ -38,7 +39,6 @@ export default function Workspace() {
   const [connStatus, setConnStatus] = useState("connecting");
   const ownerToken = getOwnerToken(publicId);
 
-  // refs to avoid stale closures in actor subscribe
   const draftRef = useRef("");
   const activeFileRef = useRef(null);
   const activeFileIdRef = useRef(null);
@@ -49,32 +49,41 @@ export default function Workspace() {
   const roomRef = useRef(null);
   const dirtyRef = useRef(false);
   const doSaveRef = useRef(() => {});
-  const lastPongRef = useRef(Date.now());
-  const sendTimerRef = useRef(null);
 
   const loadProject = useCallback(async () => {
     try {
-      const res = await base44.functions.invoke("getProject", { public_id: publicId, owner_token: ownerToken });
-      const d = res.data;
+      const res = await fetch(`/api/projects/${publicId}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to load project');
+      }
+
+      const d = await res.json();
       setProject(d.project);
-      setFiles(d.files);
-      setAccess(d.access);
-      setMe(d.me);
+      setFiles(d.files || []);
+      setAccess(d.access || { role: "viewer", canEdit: false });
+      setMe(d.me || null);
       if (d.inviteCodes) setInviteCodes(d.inviteCodes);
-      setActiveFileId((prev) => prev || (d.files.length ? d.files[0].id : null));
+      setActiveFileId((prev) => prev || (d.files && d.files.length ? d.files[0].id : null));
     } catch (e) {
-      toast({ title: "Failed to load project", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "Failed to load project", description: e.message, variant: "destructive" });
       navigate("/");
-    } finally { setLoading(false); }
-  }, [publicId, ownerToken]);
+    } finally {
+      setLoading(false);
+    }
+  }, [publicId, navigate, toast]);
 
   useEffect(() => { loadProject(); }, [loadProject]);
 
   const activeFile = files.find((f) => f.id === activeFileId);
-  const isOwner = access.role === "owner";
+  const isOwner = access.role === "owner" || access.isOwner;
   const canEdit = access.canEdit;
 
-  // keep refs in sync
   useEffect(() => { activeFileRef.current = activeFile; }, [activeFile]);
   useEffect(() => { activeFileIdRef.current = activeFileId; }, [activeFileId]);
   useEffect(() => { filesRef.current = files; }, [files]);
@@ -94,18 +103,27 @@ export default function Workspace() {
     const content = draftRef.current;
     setSaveStatus("saving");
     try {
-      await base44.functions.invoke("saveFile", {
-        public_id: publicId, file_id: file.id, owner_token: ownerToken,
-        content, user_name: me?.name || getGuestIdentity(), create_history: false
+      const res = await fetch(`/api/files/${file.id}/content`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+        credentials: 'include'
       });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Autosave failed');
+      }
+
       setFiles((prev) => prev.map((f) => (f.id === file.id ? { ...f, content } : f)));
       setDirty(false);
       setSaveStatus("saved");
     } catch (e) {
       setSaveStatus("error");
-      toast({ title: "Auto-save failed", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "Auto-save failed", description: e.message, variant: "destructive" });
     }
-  }, [publicId, ownerToken, me]);
+  }, [toast]);
+
   useEffect(() => { doSaveRef.current = doSave; }, [doSave]);
 
   useEffect(() => {
@@ -121,87 +139,31 @@ export default function Workspace() {
     if (!file || !canEditRef.current) return;
     setSavingHistory(true);
     try {
-      const res = await base44.functions.invoke("saveFile", {
-        public_id: publicId, file_id: file.id, owner_token: ownerToken,
-        content: draftRef.current, user_name: me?.name || getGuestIdentity(), create_history: true
+      const res = await fetch(`/api/files/${file.id}/versions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content: draftRef.current, user_name: me?.name || getGuestIdentity() }),
+        credentials: 'include'
       });
-      setFiles((prev) => prev.map((f) => (f.id === file.id ? { ...f, content: draftRef.current, version_number: res.data.version_number } : f)));
+
+      const data = await res.json();
+      const versionNum = data.version?.version_number || (file.version_number || 1) + 1;
+
+      setFiles((prev) => prev.map((f) => (f.id === file.id ? { ...f, content: draftRef.current, version_number: versionNum } : f)));
       setDirty(false);
       setSaveStatus("saved");
       setHistoryKey((k) => k + 1);
-      toast({ title: "Saved to history", description: `Version ${res.data.version_number}` });
+      toast({ title: "Saved to history", description: `Version ${versionNum}` });
     } catch (e) {
-      toast({ title: "Failed to save history", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "Failed to save history", description: e.message, variant: "destructive" });
     } finally { setSavingHistory(false); }
-  }, [publicId, ownerToken, me]);
+  }, [me, toast]);
 
-  // Ctrl/Cmd+S → Save to History
   useEffect(() => {
     function onKey(e) { if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); doSaveHistory(); } }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [doSaveHistory]);
-
-  // REAL-TIME: connect to the CodeSession actor
-  useEffect(() => {
-    let connId = sessionStorage.getItem("codexy_conn_id");
-    if (!connId) { connId = crypto.randomUUID(); sessionStorage.setItem("codexy_conn_id", connId); }
-    const room = base44.actors.CodeSession(publicId).connect({ id: connId });
-    roomRef.current = room;
-    lastPongRef.current = Date.now();
-    setConnStatus("connecting");
-    const sub = room.subscribe((msg) => {
-      if (!msg || typeof msg !== "object") return;
-      if (msg.type === "pong") { lastPongRef.current = Date.now(); setConnStatus("connected"); return; }
-      if (msg.type === "sync") {
-        mySeatRef.current = msg.seat;
-        // seed the actor with any files it doesn't have yet
-        const filesObj = {};
-        for (const f of filesRef.current) {
-          if (!msg.content[f.id]) filesObj[f.id] = f.content || "";
-        }
-        if (Object.keys(filesObj).length) room.send({ type: "init", files: filesObj });
-        // apply live content for the active file if the actor has it
-        if (activeFileIdRef.current && msg.content[activeFileIdRef.current]) {
-          applyingRemote.current = true;
-          setDraft(msg.content[activeFileIdRef.current]);
-          setDirty(false);
-        }
-      } else if (msg.type === "sync_file") {
-        if (msg.file_id === activeFileIdRef.current && msg.content != null) {
-          applyingRemote.current = true;
-          setDraft(msg.content);
-          setDirty(false);
-        }
-      } else if (msg.type === "edit") {
-        if (msg.file_id === activeFileIdRef.current && msg.seat !== mySeatRef.current) {
-          applyingRemote.current = true;
-          setDraft(msg.content);
-          setDirty(false);
-        }
-      } else if (msg.type === "presence") {
-        setActiveUsers(msg.users || []);
-      }
-    });
-    room.send({ type: "presence", name: getGuestIdentity(), anonymous: true });
-    return () => { sub.unsubscribe(); room.close(); roomRef.current = null; };
-  }, [publicId]);
-
-  // update presence when identity resolves
-  useEffect(() => {
-    if (roomRef.current) {
-      roomRef.current.send({ type: "presence", name: me?.name || getGuestIdentity(), anonymous: !me });
-    }
-  }, [me]);
-
-  // heartbeat → reconnect indicator
-  useEffect(() => {
-    const interval = setInterval(() => {
-      roomRef.current?.send({ type: "ping" });
-      if (lastPongRef.current && Date.now() - lastPongRef.current > 15000) setConnStatus("reconnecting");
-    }, 8000);
-    return () => clearInterval(interval);
-  }, []);
 
   function handleChange(v) {
     if (applyingRemote.current) { applyingRemote.current = false; setDraft(v); return; }
@@ -209,16 +171,8 @@ export default function Workspace() {
     draftRef.current = v;
     setDraft(v);
     setDirty(true);
-    // broadcast to actor (throttled ~100ms for low latency without flooding)
-    if (activeFileRef.current && roomRef.current) {
-      if (sendTimerRef.current) clearTimeout(sendTimerRef.current);
-      sendTimerRef.current = setTimeout(() => {
-        roomRef.current?.send({ type: "edit", file_id: activeFileRef.current.id, content: draftRef.current });
-      }, 100);
-    }
   }
 
-  // detect edit attempts by anonymous viewers (readOnly editor) → login prompt
   function handleEditorMount(editor) {
     editor.onKeyDown((e) => {
       if (!canEditRef.current) {
@@ -235,26 +189,52 @@ export default function Workspace() {
   const handleSelectFile = useCallback(async (id) => {
     if (dirtyRef.current && canEditRef.current && activeFileRef.current) { await doSaveRef.current(); }
     setActiveFileId(id);
-    roomRef.current?.send({ type: "request_file", file_id: id });
   }, []);
 
   const manageFile = useCallback(async (action, payload) => {
     if (dirtyRef.current && canEditRef.current && activeFileRef.current) { await doSaveRef.current(); }
     try {
-      const res = await base44.functions.invoke("manageFile", { public_id: publicId, owner_token: ownerToken, action, ...payload });
-      setFiles(res.data.files);
-      if (action === "create" && res.data.files.length) {
-        const newest = res.data.files[res.data.files.length - 1];
-        setActiveFileId(newest.id);
+      if (action === "create") {
+        const res = await fetch(`/api/projects/${publicId}/files`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: payload.filename, language: payload.language }),
+          credentials: 'include'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to create file');
+        setFiles((prev) => [...prev, data.file]);
+        setActiveFileId(data.file.id);
+      } else if (action === "rename") {
+        const res = await fetch(`/api/files/${payload.file_id}/content`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: payload.filename }),
+          credentials: 'include'
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to rename file');
+        setFiles((prev) => prev.map((f) => (f.id === payload.file_id ? { ...f, filename: payload.filename } : f)));
+      } else if (action === "delete") {
+        const res = await fetch(`/api/files/${payload.file_id}`, {
+          method: 'DELETE',
+          credentials: 'include'
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || 'Failed to delete file');
+        }
+        setFiles((prev) => prev.filter((f) => f.id !== payload.file_id));
+        setActiveFileId((prev) => (prev === payload.file_id ? null : prev));
       }
     } catch (e) {
-      toast({ title: "Failed", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "File operation failed", description: e.message, variant: "destructive" });
     }
-  }, [publicId, ownerToken]);
+  }, [publicId, toast]);
 
   const onAdd = useCallback((name, lang) => manageFile("create", { filename: name, language: lang }), [manageFile]);
   const onRename = useCallback((id, name) => manageFile("rename", { file_id: id, filename: name }), [manageFile]);
-  const onDelete = useCallback((id) => { manageFile("delete", { file_id: id }); setActiveFileId((prev) => (prev === id ? null : prev)); }, [manageFile]);
+  const onDelete = useCallback((id) => manageFile("delete", { file_id: id }), [manageFile]);
 
   const handleRestored = useCallback((d) => {
     setFiles((prev) => prev.map((f) => (f.id === activeFileIdRef.current ? { ...f, content: d.content, version_number: d.version_number } : f)));
@@ -277,7 +257,6 @@ export default function Workspace() {
         {isOwner && <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-300">Owner</span>}
         <div className="flex-1" />
 
-        {/* active users */}
         {activeUsers.length > 0 && (
           <div className="flex items-center gap-1.5 mr-2">
             <div className="flex -space-x-2">
@@ -289,10 +268,9 @@ export default function Workspace() {
           </div>
         )}
 
-        {/* connection status */}
         <div className="flex items-center gap-1.5 text-[11px] mr-1">
-          <span className={`w-2 h-2 rounded-full ${connStatus === "connected" ? "bg-green-400" : connStatus === "reconnecting" ? "bg-amber-400 animate-pulse" : "bg-white/30 animate-pulse"}`} />
-          <span className="text-white/50 hidden sm:inline">{connStatus === "connected" ? "Live" : connStatus === "reconnecting" ? "Reconnecting..." : "Connecting..."}</span>
+          <span className="w-2 h-2 rounded-full bg-green-400" />
+          <span className="text-white/50 hidden sm:inline">Online</span>
         </div>
 
         <Button variant="ghost" size="sm" onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))} className="text-white/60 hover:text-white h-8">{theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}</Button>
@@ -306,7 +284,7 @@ export default function Workspace() {
           <Button size="sm" variant="outline" onClick={() => navigate("/login")} className="border-white/15 bg-transparent text-white hover:bg-white/10 h-8"><LogIn className="w-3.5 h-3.5 mr-1.5" /> Login</Button>
         )}
         {me && (
-          <Button size="sm" variant="ghost" onClick={() => { base44.auth.logout(window.location.origin); }} className="text-white/60 hover:text-white h-8">Logout</Button>
+          <Button size="sm" variant="ghost" onClick={() => logout(true, "/")} className="text-white/60 hover:text-white h-8">Logout</Button>
         )}
       </header>
 
@@ -363,8 +341,8 @@ export default function Workspace() {
                   <div key={i} className="px-3 py-2 flex items-center gap-2 border-b border-white/10">
                     <div className="w-7 h-7 rounded-full bg-pink-500/20 text-pink-300 flex items-center justify-center text-xs">{u.name.charAt(0).toUpperCase()}</div>
                     <div className="min-w-0">
-                      <div className="text-sm text-white truncate">{u.name}{u.seat === mySeatRef.current && u.anonymous ? " (you)" : ""}</div>
-                      <div className="text-[11px] text-white/40">{u.anonymous ? "Guest" : "Editor"}</div>
+                      <div className="text-sm text-white truncate">{u.name}</div>
+                      <div className="text-[11px] text-white/40">Editor</div>
                     </div>
                   </div>
                 ))}

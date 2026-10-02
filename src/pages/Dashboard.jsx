@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
 import { useAuth } from "@/lib/AuthContext";
 import { ArrowRight, Users, Activity, Ticket, LogOut, Loader2, Code2 } from "lucide-react";
-import { setOwnerToken } from "@/lib/projectUtils";
 import { useToast } from "@/components/ui/use-toast";
 import JoinModal from "@/components/project/JoinModal";
 
@@ -19,21 +17,12 @@ function timeAgo(d) {
   return `${days}d ago`;
 }
 
-const actionLabel = {
-  registered: "registered",
-  logged_in: "logged in",
-  created_session: "created a session",
-  joined_session: "joined a session",
-};
-
 export default function Dashboard() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const { user, isAuthenticated, isLoadingAuth } = useAuth();
+  const { user, isAuthenticated, isLoadingAuth, logout } = useAuth();
   const [showJoin, setShowJoin] = useState(false);
   const [starting, setStarting] = useState(false);
-  const [activity, setActivity] = useState([]);
-  const [loadingAct, setLoadingAct] = useState(true);
   const [projects, setProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
 
@@ -43,27 +32,38 @@ export default function Dashboard() {
       return;
     }
     if (!isAuthenticated) return;
-    // best-effort: record login + load dashboard data
-    base44.functions.invoke("logActivity", { action: "logged_in" }).catch(() => {});
-    base44.functions.invoke("getUserDashboard", {})
-      .then((res) => setActivity(res.data.activity || []))
-      .catch(() => {})
-      .finally(() => setLoadingAct(false));
-    base44.functions.invoke("getMyProjects", {})
-      .then((res) => setProjects(res.data.projects || []))
-      .catch(() => {})
+
+    fetch('/api/projects', {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include'
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          const data = await res.json();
+          setProjects(data.projects || []);
+        }
+      })
+      .catch((e) => console.error('Error fetching projects:', e))
       .finally(() => setLoadingProjects(false));
-  }, [isAuthenticated, isLoadingAuth]);
+  }, [isAuthenticated, isLoadingAuth, navigate]);
 
   async function startCoding() {
     setStarting(true);
     try {
-      const res = await base44.functions.invoke("createProject", { name: "Untitled Project", language: "javascript" });
-      setOwnerToken(res.data.public_id, res.data.owner_token);
-      base44.functions.invoke("logActivity", { action: "created_session", project_public_id: res.data.public_id }).catch(() => {});
-      navigate(`/p/${res.data.public_id}`);
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: "Untitled Project", language: "javascript" }),
+        credentials: 'include'
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create project');
+
+      navigate(`/p/${data.project.public_id}`);
     } catch (e) {
-      toast({ title: "Failed to start", description: e.response?.data?.error || e.message, variant: "destructive" });
+      toast({ title: "Failed to start", description: e.message, variant: "destructive" });
     } finally { setStarting(false); }
   }
 
@@ -71,15 +71,14 @@ export default function Dashboard() {
     return <div className="min-h-screen bg-[#2c3035] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-white/50" /></div>;
   }
 
-  const name = user?.full_name || user?.email?.split("@")[0] || "there";
+  const name = user?.name || user?.email?.split("@")[0] || "there";
 
   return (
     <div className="min-h-screen bg-[#2c3035] text-white flex flex-col">
       <header className="px-8 py-5 flex items-center justify-between">
         <Link to="/" className="text-2xl font-bold tracking-tight">codexy</Link>
         <div className="flex items-center gap-5 text-sm">
-          <Link to="/admin" className="text-white/50 hover:text-white/80">Admin</Link>
-          <button onClick={() => base44.auth.logout("/")} className="inline-flex items-center gap-1.5 text-white/70 hover:text-white"><LogOut className="w-4 h-4" /> Logout</button>
+          <button onClick={() => logout(true, "/")} className="inline-flex items-center gap-1.5 text-white/70 hover:text-white"><LogOut className="w-4 h-4" /> Logout</button>
         </div>
       </header>
 
@@ -120,33 +119,8 @@ export default function Dashboard() {
                     <div className="font-medium text-white truncate">{p.name}</div>
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-500/15 text-pink-300 shrink-0">{p.language || "code"}</span>
                   </div>
-                  <div className="text-xs text-white/40 mt-1">{p.file_count} file{p.file_count === 1 ? "" : "s"} · {timeAgo(p.created_date)}</div>
-                  {p.preview_filename && <div className="text-xs text-white/50 mt-2 font-mono truncate">{p.preview_filename}</div>}
+                  <div className="text-xs text-white/40 mt-1">{timeAgo(p.created_at)}</div>
                 </Link>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="mt-10">
-          <h2 className="text-lg font-semibold flex items-center gap-2 mb-4"><Activity className="w-4 h-4 text-pink-400" /> Your Activity</h2>
-          {loadingAct ? (
-            <div className="text-white/40 text-sm">Loading…</div>
-          ) : activity.length === 0 ? (
-            <div className="text-white/40 text-sm">No activity yet. Start or join a session to see it here.</div>
-          ) : (
-            <div className="space-y-2">
-              {activity.map((a) => (
-                <div key={a.id} className="flex items-center justify-between rounded-lg bg-white/5 border border-white/10 px-4 py-3">
-                  <div className="flex items-center gap-2 text-sm">
-                    <Ticket className="w-4 h-4 text-pink-400/70" />
-                    <span className="text-white/80">{actionLabel[a.action] || a.action}</span>
-                    {a.project_public_id && (
-                      <Link to={`/p/${a.project_public_id}`} className="text-pink-400 hover:text-pink-300 text-xs ml-1">open</Link>
-                    )}
-                  </div>
-                  <span className="text-xs text-white/40">{timeAgo(a.created_date)}</span>
-                </div>
               ))}
             </div>
           )}

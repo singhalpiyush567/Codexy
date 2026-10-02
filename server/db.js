@@ -181,17 +181,159 @@ export async function query(text, params = []) {
     return { rows: [act], rowCount: 1 };
   }
 
-  // 12. INSERT INTO OAUTH_ACCOUNTS
-  if (sql.includes('INSERT INTO oauth_accounts')) {
-    const acc = {
+  // 12. INSERT INTO PROJECTS
+  if (sql.includes('INSERT INTO projects')) {
+    const proj = {
       id: crypto.randomUUID(),
-      user_id: params[0],
-      provider: params[1],
-      provider_account_id: params[2],
+      public_id: params[0],
+      name: params[1],
+      language: params[2],
+      user_id: params[3],
+      owner_token: 'deprecated',
+      created_at: new Date(),
+      updated_at: new Date()
+    };
+    memoryStore.projects.push(proj);
+    return { rows: [proj], rowCount: 1 };
+  }
+
+  // 13. SELECT FROM PROJECTS BY PUBLIC_ID OR ID
+  if (sql.includes('SELECT') && sql.includes('FROM projects WHERE public_id = $1')) {
+    const public_id = params[0];
+    const match = memoryStore.projects.find(p => p.public_id === public_id);
+    return { rows: match ? [match] : [], rowCount: match ? 1 : 0 };
+  }
+
+  if (sql.includes('SELECT') && sql.includes('FROM projects WHERE user_id = $1')) {
+    const user_id = params[0];
+    const rows = memoryStore.projects.filter(p => p.user_id === user_id);
+    return { rows, rowCount: rows.length };
+  }
+
+  // 14. UPDATE PROJECTS
+  if (sql.includes('UPDATE projects SET')) {
+    const projId = params[params.length - 1];
+    const proj = memoryStore.projects.find(p => p.id === projId);
+    if (proj) {
+      if (sql.includes('name = $1')) proj.name = params[0];
+      if (sql.includes('language = $1') || sql.includes('language = $2')) proj.language = params[params.length - 2];
+      proj.updated_at = new Date();
+    }
+    return { rows: proj ? [proj] : [], rowCount: proj ? 1 : 0 };
+  }
+
+  // 15. DELETE FROM PROJECTS
+  if (sql.includes('DELETE FROM projects WHERE id = $1')) {
+    const projId = params[0];
+    memoryStore.projects = memoryStore.projects.filter(p => p.id !== projId);
+    memoryStore.project_files = memoryStore.project_files.filter(f => f.project_id !== projId);
+    return { rows: [], rowCount: 1 };
+  }
+
+  // 16. INSERT INTO PROJECT_FILES
+  if (sql.includes('INSERT INTO project_files')) {
+    const file = {
+      id: crypto.randomUUID(),
+      project_id: params[0],
+      filename: params[1],
+      language: params[2],
+      content: params[3],
+      version_number: params[4] || 1,
+      created_at: new Date(),
+      updated_at: new Date()
+    };
+    memoryStore.project_files.push(file);
+    return { rows: [file], rowCount: 1 };
+  }
+
+  // 17. SELECT FROM PROJECT_FILES
+  if (sql.includes('SELECT') && sql.includes('FROM project_files') && sql.includes('JOIN projects')) {
+    const fileId = params[0];
+    const file = memoryStore.project_files.find(f => f.id === fileId);
+    if (!file) return { rows: [], rowCount: 0 };
+    const proj = memoryStore.projects.find(p => p.id === file.project_id);
+    return {
+      rows: [{ ...file, project_public_id: proj?.public_id, project_name: proj?.name }],
+      rowCount: 1
+    };
+  }
+
+  if (sql.includes('SELECT') && sql.includes('FROM project_files WHERE project_id = $1 AND filename = $2')) {
+    const projId = params[0];
+    const fname = params[1];
+    const match = memoryStore.project_files.find(f => f.project_id === projId && f.filename === fname);
+    return { rows: match ? [match] : [], rowCount: match ? 1 : 0 };
+  }
+
+  if (sql.includes('SELECT') && sql.includes('FROM project_files WHERE project_id = $1')) {
+    const projId = params[0];
+    const rows = memoryStore.project_files.filter(f => f.project_id === projId);
+    return { rows, rowCount: rows.length };
+  }
+
+  // 18. UPDATE PROJECT_FILES
+  if (sql.includes('UPDATE project_files SET content = $1')) {
+    const content = params[0];
+    const filename = params[1];
+    const language = params[2];
+    const fileId = params[3];
+    const file = memoryStore.project_files.find(f => f.id === fileId);
+    if (file) {
+      file.content = content;
+      file.filename = filename;
+      file.language = language;
+      file.updated_at = new Date();
+    }
+    return { rows: file ? [file] : [], rowCount: file ? 1 : 0 };
+  }
+
+  // 19. DELETE FROM PROJECT_FILES
+  if (sql.includes('DELETE FROM project_files WHERE id = $1')) {
+    const fileId = params[0];
+    memoryStore.project_files = memoryStore.project_files.filter(f => f.id !== fileId);
+    return { rows: [], rowCount: 1 };
+  }
+
+  // 20. PROJECT COLLABORATORS
+  if (sql.includes('INSERT INTO project_collaborators')) {
+    const pc = {
+      id: crypto.randomUUID(),
+      project_id: params[0],
+      user_id: params[1],
+      role: params[2] || 'edit',
       created_at: new Date()
     };
-    memoryStore.oauth_accounts.push(acc);
-    return { rows: [acc], rowCount: 1 };
+    memoryStore.project_collaborators.push(pc);
+    return { rows: [pc], rowCount: 1 };
+  }
+
+  if (sql.includes('SELECT role FROM project_collaborators')) {
+    const projId = params[0];
+    const userId = params[1];
+    const match = memoryStore.project_collaborators.find(pc => pc.project_id === projId && pc.user_id === userId);
+    return { rows: match ? [{ role: match.role }] : [], rowCount: match ? 1 : 0 };
+  }
+
+  if (sql.includes('UPDATE project_collaborators SET role')) {
+    const projId = params[0];
+    const userId = params[1];
+    const pc = memoryStore.project_collaborators.find(p => p.project_id === projId && p.user_id === userId);
+    if (pc) pc.role = 'edit';
+    return { rows: [], rowCount: 1 };
+  }
+
+  if (sql.includes('DELETE FROM project_collaborators')) {
+    const projId = params[0];
+    const userId = params[1];
+    memoryStore.project_collaborators = memoryStore.project_collaborators.filter(pc => !(pc.project_id === projId && pc.user_id === userId));
+    return { rows: [], rowCount: 1 };
+  }
+
+  // 21. SELECT FROM FILE_VERSIONS
+  if (sql.includes('SELECT COUNT(*) FROM file_versions')) {
+    const fileId = params[0];
+    const rows = memoryStore.file_versions.filter(fv => fv.file_id === fileId);
+    return { rows: [{ count: rows.length }], rowCount: 1 };
   }
 
   return { rows: [], rowCount: 0 };
