@@ -137,7 +137,7 @@ export async function getUserBySession(cookieString) {
 export async function createOtpToken(email, userId = null, type = 'otp') {
   const code = type === 'password_reset' 
     ? crypto.randomBytes(32).toString('hex')
-    : Math.floor(100000 + Math.random() * 900000).toString();
+    : crypto.randomInt(100000, 1000000).toString();
 
   const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
 

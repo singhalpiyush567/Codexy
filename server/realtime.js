@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { WebSocketServer } from 'ws';
 import { getUserBySession } from './auth.js';
 import { checkProjectPermission } from './projects.js';
@@ -60,7 +61,7 @@ export async function handleRealtimeConnection(ws, req) {
     user = null;
   }
 
-  const clientId = Math.random().toString(36).substring(2, 11);
+  const clientId = crypto.randomBytes(8).toString('hex');
   let currentRoomId = null;
   let currentPermission = null;
   let seat = 1;

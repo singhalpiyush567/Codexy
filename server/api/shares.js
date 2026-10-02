@@ -283,7 +283,7 @@ export async function handleSharesRequest(req, res, pathParts, queryParams, body
       const invPermission = permission === 'edit' ? 'edit' : 'view';
 
       // Generate 4-digit code e.g. 1000 - 9999
-      const code = Math.floor(1000 + Math.random() * 9000).toString();
+      const code = crypto.randomInt(1000, 10000).toString();
       const expiresAt = expires_at ? new Date(expires_at) : null;
       const maxUses = max_uses != null ? parseInt(max_uses, 10) : 0;
 
