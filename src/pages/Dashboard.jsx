@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/lib/AuthContext";
-import { ArrowRight, Users, Activity, Ticket, LogOut, Loader2, Code2 } from "lucide-react";
+import { ArrowRight, Users, Activity, Ticket, LogOut, Loader2, Code2, Trash2 } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 import JoinModal from "@/components/project/JoinModal";
 
@@ -67,6 +67,26 @@ export default function Dashboard() {
     } finally { setStarting(false); }
   }
 
+  async function deleteProject(publicId, e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm("Are you sure you want to delete this project?")) return;
+    try {
+      const res = await fetch(`/api/projects/${publicId}`, {
+        method: "DELETE",
+        credentials: "include"
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to delete project");
+      }
+      setProjects((prev) => prev.filter((p) => p.public_id !== publicId));
+      toast({ title: "Project deleted" });
+    } catch (err) {
+      toast({ title: "Could not delete project", description: err.message, variant: "destructive" });
+    }
+  }
+
   if (isLoadingAuth) {
     return <div className="min-h-screen bg-[#2c3035] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-white/50" /></div>;
   }
@@ -114,10 +134,17 @@ export default function Dashboard() {
           ) : (
             <div className="grid sm:grid-cols-2 gap-3">
               {projects.map((p) => (
-                <Link key={p.public_id} to={`/p/${p.public_id}`} className="block rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 hover:border-pink-500/30 transition-colors p-4">
+                <Link key={p.public_id} to={`/p/${p.public_id}`} className="block rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 hover:border-pink-500/30 transition-colors p-4 group">
                   <div className="flex items-center justify-between gap-2">
                     <div className="font-medium text-white truncate">{p.name}</div>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-500/15 text-pink-300 shrink-0">{p.language || "code"}</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-pink-500/15 text-pink-300">{p.language || "code"}</span>
+                      {p.user_role === 'owner' && (
+                        <button onClick={(e) => deleteProject(p.public_id, e)} title="Delete project" className="text-white/30 hover:text-red-400 p-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="text-xs text-white/40 mt-1">{timeAgo(p.created_at)}</div>
                 </Link>

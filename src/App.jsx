@@ -15,7 +15,6 @@ import Workspace from '@/pages/Workspace';
 import PublicShareViewer from '@/pages/PublicShareViewer';
 import JoinProject from '@/pages/JoinProject';
 import Dashboard from '@/pages/Dashboard';
-import AdminDashboard from '@/pages/AdminDashboard';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -48,7 +47,6 @@ const AuthenticatedApp = () => {
       <Route path="/share/:token" element={<PublicShareViewer />} />
       <Route path="/join" element={<JoinProject />} />
       <Route path="/dashboard" element={<Dashboard />} />
-      <Route path="/admin" element={<AdminDashboard />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );

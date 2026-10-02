@@ -1,6 +1,6 @@
-import base44 from "@base44/vite-plugin";
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
+import path from 'path';
 import { handleAuthRequest } from './server/api/auth.js';
 import { handleProjectsRequest } from './server/api/projects.js';
 import { handleFilesRequest } from './server/api/files.js';
@@ -91,13 +91,11 @@ function apiDevMiddleware() {
 export default defineConfig({
   plugins: [
     apiDevMiddleware(),
-    base44({
-      legacySDKImports: process.env.BASE44_LEGACY_SDK_IMPORTS === 'true',
-      hmrNotifier: true,
-      navigationNotifier: true,
-      analyticsTracker: true,
-      visualEditAgent: true
-    }),
     react(),
-  ]
+  ],
+  resolve: {
+    alias: {
+      '@': path.resolve(import.meta.dirname, './src'),
+    },
+  },
 });

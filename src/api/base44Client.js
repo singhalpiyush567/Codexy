@@ -1,12 +1,10 @@
-import { createClient } from '@base44/sdk';
-import { appParams } from '@/lib/app-params';
-
-const { appId, token, functionsVersion, appBaseUrl } = appParams;
-
-export const base44 = createClient({
-  appId,
-  token,
-  functionsVersion,
-  serverUrl: '',
-  appBaseUrl
-});
+// DEPRECATED BASE44 CLIENT STUB - CodeXY now uses independent Vercel/Neon/WebSocket APIs
+export const base44 = {
+  auth: {
+    me: async () => null,
+    isAuthenticated: async () => false,
+  },
+  functions: {
+    invoke: async () => ({ data: {} }),
+  }
+};
