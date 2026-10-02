@@ -20,10 +20,17 @@ export function useRealtime({ projectId, enabled = true, onEdit, onPresence, onS
   const connect = useCallback(() => {
     if (!projectId || !enabled || isDestroyed.current) return;
 
-    // Build WebSocket URL based on current window location
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/api/ws?projectId=${encodeURIComponent(projectId)}`;
+    // Build WebSocket URL based on VITE_WS_URL or current window location
+    const customWsUrl = import.meta.env.VITE_WS_URL;
+    let wsUrl;
+    if (customWsUrl) {
+      const joinChar = customWsUrl.includes('?') ? '&' : '?';
+      wsUrl = `${customWsUrl}${joinChar}projectId=${encodeURIComponent(projectId)}`;
+    } else {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = window.location.host;
+      wsUrl = `${protocol}//${host}/api/ws?projectId=${encodeURIComponent(projectId)}`;
+    }
 
     updateStatus(reconnectAttempts.current > 0 ? 'reconnecting' : 'connecting');
 
