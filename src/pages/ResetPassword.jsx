@@ -1,6 +1,5 @@
 import React, { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { base44 } from "@/api/base44Client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,7 +9,9 @@ import AuthLayout from "@/components/AuthLayout";
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
   const resetToken = searchParams.get("token");
+  const emailParam = searchParams.get("email") || "";
 
+  const [email, setEmail] = useState(emailParam);
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
@@ -25,7 +26,18 @@ export default function ResetPassword() {
     }
     setLoading(true);
     try {
-      await base44.auth.resetPassword({ resetToken, newPassword });
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, token: resetToken, newPassword }),
+        credentials: 'include'
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'Failed to reset password');
+      }
+
       window.location.href = "/login";
     } catch (err) {
       setError(err.message || "Failed to reset password");
@@ -65,6 +77,19 @@ export default function ResetPassword() {
         </div>
       )}
       <form onSubmit={handleSubmit} className="space-y-4">
+        {!emailParam && (
+          <div className="space-y-2">
+            <Label htmlFor="email">Email</Label>
+            <Input
+              id="email"
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
+        )}
         <div className="space-y-2">
           <Label htmlFor="password">New Password</Label>
           <div className="relative">
